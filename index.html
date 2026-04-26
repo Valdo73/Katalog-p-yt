@@ -175,6 +175,9 @@
   }
   .toast.show { opacity: 1; }
   .footer-info { text-align: center; color: var(--muted); font-size: 12px; padding: 20px; }
+  .search-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .search-tab { padding: 7px 16px; border: 1px solid var(--line); border-radius: 20px; background: #fff; cursor: pointer; font-size: 13px; color: var(--muted); transition: all 0.15s; }
+  .search-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
   .barcode-box {
     background: linear-gradient(135deg, #fffaf0 0%, #fff5e0 100%);
     border: 1px solid var(--accent-2); border-radius: 6px; padding: 14px 16px; margin-bottom: 16px;
@@ -284,14 +287,32 @@
   <div class="panel">
     <h2>Dodaj nową pozycję</h2>
     <div class="barcode-box">
-      <h3>Wyszukaj po kodzie kreskowym</h3>
-      <div class="barcode-row">
-        <input type="text" id="barcode-input" placeholder="Wpisz lub zeskanuj kod (EAN/UPC), np. 5099902895727" inputmode="numeric" autocomplete="off">
-        <button type="button" class="btn primary" id="barcode-search">Szukaj</button>
-        <button type="button" class="btn" id="barcode-clear">Wyczyść</button>
+      <div class="search-tabs">
+        <button type="button" class="search-tab active" id="tab-barcode">📦 Kod kreskowy</button>
+        <button type="button" class="search-tab" id="tab-title">🔍 Nazwa / Artysta</button>
       </div>
-      <div class="barcode-status" id="barcode-status">Dane (artysta, tytuł, rok, gatunek, okładka) pobierane są z otwartej bazy MusicBrainz.</div>
-      <div class="barcode-results" id="barcode-results"></div>
+
+      <!-- Wyszukiwanie po kodzie kreskowym -->
+      <div id="search-by-barcode">
+        <div class="barcode-row">
+          <input type="text" id="barcode-input" placeholder="Wpisz lub zeskanuj kod (EAN/UPC), np. 5099902895727" inputmode="numeric" autocomplete="off" style="font-family:'SF Mono',Menlo,Consolas,monospace;letter-spacing:1px;">
+          <button type="button" class="btn primary" id="barcode-search">Szukaj</button>
+          <button type="button" class="btn" id="barcode-clear">Wyczyść</button>
+        </div>
+        <div class="barcode-status" id="barcode-status">Dane (artysta, tytuł, rok, gatunek, okładka) pobierane są z otwartej bazy MusicBrainz.</div>
+        <div class="barcode-results" id="barcode-results"></div>
+      </div>
+
+      <!-- Wyszukiwanie po nazwie/artyście -->
+      <div id="search-by-title" style="display:none">
+        <div class="barcode-row">
+          <input type="text" id="title-input" placeholder="Wpisz nazwę albumu lub artystę, np. Pink Floyd Dark Side">
+          <button type="button" class="btn primary" id="title-search">Szukaj</button>
+          <button type="button" class="btn" id="title-clear">Wyczyść</button>
+        </div>
+        <div class="barcode-status" id="title-status">Wyszukiwanie w bazie MusicBrainz po nazwie albumu lub artyście.</div>
+        <div class="barcode-results" id="title-results"></div>
+      </div>
     </div>
 
     <form id="add-form">
@@ -897,6 +918,82 @@ document.getElementById('clear-all').addEventListener('click', async () => {
   if (!confirm(`Na pewno usunąć całą kolekcję (${catalog.length} pozycji)? Tej operacji nie można cofnąć.`)) return;
   await clearAll();
   toast('Kolekcja wyczyszczona');
+});
+
+// ---- PRZEŁĄCZANIE ZAKŁADEK WYSZUKIWANIA ----
+document.getElementById('tab-barcode').addEventListener('click', () => {
+  document.getElementById('tab-barcode').classList.add('active');
+  document.getElementById('tab-title').classList.remove('active');
+  document.getElementById('search-by-barcode').style.display = 'block';
+  document.getElementById('search-by-title').style.display = 'none';
+});
+document.getElementById('tab-title').addEventListener('click', () => {
+  document.getElementById('tab-title').classList.add('active');
+  document.getElementById('tab-barcode').classList.remove('active');
+  document.getElementById('search-by-title').style.display = 'block';
+  document.getElementById('search-by-barcode').style.display = 'none';
+});
+
+// ---- WYSZUKIWANIE PO NAZWIE / ARTYŚCIE ----
+function setTitleStatus(msg, kind) {
+  const el = document.getElementById('title-status');
+  el.textContent = msg; el.classList.remove('error','ok');
+  if (kind) el.classList.add(kind);
+}
+
+async function searchByTitle(query) {
+  const q = query.trim();
+  if (q.length < 2) { setTitleStatus('Wpisz co najmniej 2 znaki.', 'error'); return; }
+  setTitleStatus('Szukam w bazie MusicBrainz...');
+  document.getElementById('title-results').classList.remove('show');
+  try {
+    const url = `${MB_BASE}/release/?query=${encodeURIComponent(q)}&fmt=json&limit=15`;
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) throw new Error('Błąd HTTP ' + res.status);
+    const data = await res.json();
+    const releases = data.releases || [];
+    if (!releases.length) { setTitleStatus('Nie znaleziono wyników. Spróbuj innej frazy.', 'error'); return; }
+    setTitleStatus(`Znaleziono ${releases.length} wyników — wybierz właściwy album:`, 'ok');
+    renderTitleResults(releases);
+  } catch(err) { setTitleStatus('Błąd połączenia: ' + err.message, 'error'); }
+}
+
+function renderTitleResults(releases) {
+  const box = document.getElementById('title-results');
+  box.innerHTML = releases.map((r, i) => {
+    const artist = (r['artist-credit'] || []).map(a => a.name || (a.artist && a.artist.name)).filter(Boolean).join(', ');
+    const formats = (r.media || []).map(m => m.format).filter(Boolean);
+    const country = r.country ? ` · ${escapeHtml(r.country)}` : '';
+    const year = (r.date || '').slice(0, 4);
+    return `<div class="barcode-result" data-idx="${i}">
+      <div class="r-title">${escapeHtml(artist || '?')} — ${escapeHtml(r.title || '?')}</div>
+      <div class="r-meta">${year ? escapeHtml(year) + ' · ' : ''}${escapeHtml(formats.join(', ') || 'nieznany format')}${country}</div>
+    </div>`;
+  }).join('');
+  box.classList.add('show');
+  box.querySelectorAll('.barcode-result').forEach(el => {
+    el.addEventListener('click', async () => {
+      const idx = Number(el.dataset.idx);
+      box.classList.remove('show');
+      setTitleStatus('Wypełniam formularz...', 'ok');
+      await applyRelease(releases[idx], '');
+      // Przełącz na zakładkę kodu by użytkownik widział formularz
+    });
+  });
+}
+
+document.getElementById('title-search').addEventListener('click', () => {
+  const q = document.getElementById('title-input').value.trim();
+  if (!q) { setTitleStatus('Wpisz nazwę albumu lub artysty.', 'error'); return; }
+  searchByTitle(q);
+});
+document.getElementById('title-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); document.getElementById('title-search').click(); }
+});
+document.getElementById('title-clear').addEventListener('click', () => {
+  document.getElementById('title-input').value = '';
+  document.getElementById('title-results').classList.remove('show');
+  setTitleStatus('Wyszukiwanie w bazie MusicBrainz po nazwie albumu lub artyście.');
 });
 
 // ---- BARCODE ----
