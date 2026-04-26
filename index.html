@@ -444,7 +444,7 @@
 <!-- Firebase SDK -->
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, query, writeBatch }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
@@ -492,7 +492,13 @@ function initFirebase() {
     } else {
       currentUser = null;
       if (unsubscribe) { unsubscribe(); unsubscribe = null; }
-      showLogin();
+      // Sprawdź czy wracamy z redirect logowania
+      getRedirectResult(auth).then(result => {
+        if (!result) showLogin();
+      }).catch(e => {
+        showLogin();
+        toast('Błąd logowania: ' + e.message);
+      });
     }
   });
 }
@@ -526,7 +532,7 @@ document.getElementById('btn-login').addEventListener('click', async () => {
   }
   try {
     showLoading();
-    await signInWithPopup(auth, provider);
+    await signInWithRedirect(auth, provider);
   } catch(e) {
     showLogin();
     toast('Błąd logowania: ' + e.message);
