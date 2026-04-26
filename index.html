@@ -991,10 +991,13 @@ function blobToDataUrl(blob) {
   });
 }
 async function fetchCoverAsDataUrl(mbid, artist, title) {
+  // Próba 1: MusicBrainz Cover Art Archive (zwróć URL bezpośrednio)
+  const mbUrl = `${COVER_BASE}/release/${mbid}/front-500`;
   try {
-    const res = await fetch(`${COVER_BASE}/release/${mbid}/front-500`,{redirect:'follow'});
-    if (res.ok) { const d=await blobToDataUrl(await res.blob()); if(d) return d; }
+    const res = await fetch(mbUrl, {redirect:'follow', method:'HEAD'});
+    if (res.ok) return mbUrl;
   } catch(e) {}
+  // Próba 2: Discogs – zwróć URL okładki bezpośrednio
   if (artist||title) {
     try {
       const q=encodeURIComponent(`${artist||''} ${title||''}`.trim());
@@ -1003,7 +1006,7 @@ async function fetchCoverAsDataUrl(mbid, artist, title) {
         const data=await res.json();
         for (const r of (data.results||[])) {
           if (r.cover_image&&!r.cover_image.includes('spacer')&&!r.cover_image.includes('placeholder')) {
-            try { const ir=await fetch(r.cover_image); if(ir.ok){const d=await blobToDataUrl(await ir.blob());if(d)return d;} } catch(e){}
+            return r.cover_image;
           }
         }
       }
@@ -1086,7 +1089,7 @@ async function applyDiscogsRelease(r,barcode) {
   if(genre)form.genre.value=genre;
   setBarcodeStatus('Pobieram okladke z Discogs...','ok');
   let cover=null;
-  if(r.cover_image&&!r.cover_image.includes('spacer')){try{const ir=await fetch(r.cover_image);if(ir.ok)cover=await blobToDataUrl(await ir.blob());}catch(e){}}
+  if(r.cover_image&&!r.cover_image.includes('spacer')){cover=r.cover_image;}
   if(cover){newCover=cover;const prev=document.getElementById('cover-preview');prev.src=cover;prev.style.display='block';}
   setBarcodeStatus(`${artist||title}. Sprawdz dane i kliknij "Dodaj do kolekcji".`,'ok');
   form.artist.focus();
