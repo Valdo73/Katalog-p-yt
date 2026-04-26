@@ -920,41 +920,21 @@ function parseCsv(text) {
 }
 
 document.getElementById('export-excel').addEventListener('click', () => {
-  // Nagłówki
-  const rows = [
-    ['Lp.', 'Artysta', 'Tytuł albumu', 'Rok', 'Gatunek', 'Typ nośnika', 'Kod kreskowy']
-  ];
   const typeLabel = { winyl: 'Winyl', cd: 'CD', kaseta: 'Kaseta' };
+  const rows = [['Lp.', 'Artysta', 'Tytuł albumu', 'Rok', 'Gatunek', 'Typ nośnika', 'Kod kreskowy']];
   catalog.forEach((it, i) => {
-    rows.push([
-      i + 1,
-      it.artist || '',
-      it.title || '',
-      it.year || '',
-      it.genre || '',
-      typeLabel[it.type] || it.type || '',
-      it.barcode || ''
-    ]);
+    rows.push([i+1, it.artist||'', it.title||'', it.year||'', it.genre||'', typeLabel[it.type]||it.type||'', it.barcode||'']);
   });
-  // Buduj XML dla Excela (format SpreadsheetML)
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<?mso-application progid="Excel.Sheet"?>
 <Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
-  xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
-  <Styles>
-    <Style ss:ID="header">
-      <Font ss:Bold="1"/>
-      <Interior ss:Color="#8B1E1E" ss:Pattern="Solid"/>
-      <Font ss:Color="#FFFFFF" ss:Bold="1"/>
-    </Style>
-  </Styles>
-  <Worksheet ss:Name="Kolekcja muzyczna">
-    <Table>
-      ${rows.map((row, ri) => `<Row>${row.map(cell => `<Cell${ri===0?' ss:StyleID="header"':''}><Data ss:Type="${typeof cell==='number'?'Number':'String'}">${String(cell).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</Data></Cell>`).join('')}</Row>`).join('\n      ')}
-    </Table>
-  </Worksheet>
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+ <Worksheet ss:Name="Kolekcja">
+  <Table>
+${rows.map(row => `   <Row>${row.map(cell => `<Cell><Data ss:Type="${typeof cell==='number'?'Number':'String'}">${String(cell).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</Data></Cell>`).join('')}</Row>`).join('\n')}
+  </Table>
+ </Worksheet>
 </Workbook>`;
-  const blob = new Blob([xml], { type: 'application/vnd.ms-excel' });
+  const blob = new Blob([xml], { type: 'application/vnd.ms-excel;charset=utf-8' });
   downloadBlob(blob, 'kolekcja-' + new Date().toISOString().slice(0,10) + '.xls');
   toast('Wyeksportowano do Excela');
 });
