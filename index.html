@@ -947,10 +947,182 @@ function setTitleStatus(msg, kind) {
   if (kind) el.classList.add(kind);
 }
 
-// ---- WYSZUKIWANIE PO NAZWIE ----
+// ---- WYSZUKIWANIE (MusicBrainz + Discogs) ----
 const MB_BASE = 'https://musicbrainz.org/ws/2';
+const COVER_BASE = 'https://coverartarchive.org';
 const DISCOGS_BASE = 'https://api.discogs.com';
 const DISCOGS_TOKEN = 'kuovtBqNcDmufsuRiYUgdwqYmvdOnGIGVIVnjFOr';
+
+const GENRE_PL = {
+  'rock':'Rock','pop':'Pop','jazz':'Jazz','blues':'Blues','classical':'Klasyczna','metal':'Metal',
+  'heavy metal':'Heavy Metal','hip hop':'Hip-hop','hip-hop':'Hip-hop','rap':'Hip-hop',
+  'electronic':'Elektroniczna','electronica':'Elektroniczna','techno':'Techno','house':'House',
+  'folk':'Folk','reggae':'Reggae','punk':'Punk','country':'Country','soul':'Soul','funk':'Funk',
+  'disco':'Disco','r&b':'R&B','rnb':'R&B','alternative rock':'Rock alternatywny',
+  'progressive rock':'Rock progresywny','psychedelic rock':'Rock psychodeliczny',
+  'indie rock':'Indie rock','indie':'Indie','pop rock':'Pop rock','hard rock':'Hard rock',
+  'singer-songwriter':'Singer-songwriter','soundtrack':'Soundtrack','ambient':'Ambient',
+};
+function prettifyGenre(tag) {
+  if (!tag) return '';
+  const lower = tag.toLowerCase();
+  if (GENRE_PL[lower]) return GENRE_PL[lower];
+  return tag.replace(/\b\w/g, c => c.toUpperCase());
+}
+function setBarcodeStatus(msg, kind) {
+  const el = document.getElementById('barcode-status');
+  el.textContent = msg; el.classList.remove('error','ok');
+  if (kind) el.classList.add(kind);
+}
+function detectMediaType(formats) {
+  if (!formats||!formats.length) return 'cd';
+  const f = formats.join(' ').toLowerCase();
+  if (f.includes('vinyl')||f.includes('lp')||/\b7"|10"|12"\b/.test(f)) return 'winyl';
+  if (f.includes('cassette')||f.includes('kaseta')) return 'kaseta';
+  if (f.includes('cd')) return 'cd';
+  return 'cd';
+}
+function blobToDataUrl(blob) {
+  return new Promise((resolve) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => resolve(null);
+    r.readAsDataURL(blob);
+  });
+}
+async function fetchCoverAsDataUrl(mbid, artist, title) {
+  try {
+    const res = await fetch(`${COVER_BASE}/release/${mbid}/front-500`,{redirect:'follow'});
+    if (res.ok) { const d=await blobToDataUrl(await res.blob()); if(d) return d; }
+  } catch(e) {}
+  if (artist||title) {
+    try {
+      const q=encodeURIComponent(`${artist||''} ${title||''}`.trim());
+      const res=await fetch(`${DISCOGS_BASE}/database/search?q=${q}&type=release&per_page=5&token=${DISCOGS_TOKEN}`,{headers:{'User-Agent':'KatalogMuzyczny/1.0'}});
+      if (res.ok) {
+        const data=await res.json();
+        for (const r of (data.results||[])) {
+          if (r.cover_image&&!r.cover_image.includes('spacer')&&!r.cover_image.includes('placeholder')) {
+            try { const ir=await fetch(r.cover_image); if(ir.ok){const d=await blobToDataUrl(await ir.blob());if(d)return d;} } catch(e){}
+          }
+        }
+      }
+    } catch(e) {}
+  }
+  return null;
+}
+async function fetchGenreFromMB(release) {
+  const tryF=async url=>{try{const r=await fetch(url,{headers:{'Accept':'application/json'}});if(!r.ok)return null;return await r.json();}catch(e){return null;}};
+  const cands=[];
+  const rg=release['release-group'];
+  if(rg&&rg.id){const d=await tryF(`${MB_BASE}/release-group/${rg.id}?inc=tags+genres&fmt=json`);if(d){(d.genres||[]).forEach(g=>cands.push({name:g.name,count:(g.count||0)+5}));(d.tags||[]).forEach(t=>cands.push({name:t.name,count:t.count||0}));}}
+  if(!cands.length){const d=await tryF(`${MB_BASE}/release/${release.id}?inc=tags+genres&fmt=json`);if(d){(d.genres||[]).forEach(g=>cands.push({name:g.name,count:(g.count||0)+5}));(d.tags||[]).forEach(t=>cands.push({name:t.name,count:t.count||0}));}}
+  if(!cands.length)return'';
+  cands.sort((a,b)=>b.count-a.count);
+  return prettifyGenre(cands[0].name);
+}
+async function searchByBarcode(barcode) {
+  const cleaned=barcode.replace(/[^0-9Xx]/g,'');
+  if(cleaned.length<6){setBarcodeStatus('Kod kreskowy jest za krotki. Wpisz pelny EAN/UPC.','error');return;}
+  setBarcodeStatus('Szukam w MusicBrainz...');
+  document.getElementById('barcode-results').classList.remove('show');
+  try {
+    const res=await fetch(`${MB_BASE}/release/?query=barcode:${encodeURIComponent(cleaned)}&fmt=json&limit=10`,{headers:{'Accept':'application/json'}});
+    if(!res.ok)throw new Error('Blad HTTP '+res.status);
+    const releases=(await res.json()).releases||[];
+    if(!releases.length){setBarcodeStatus('Nie znaleziono w MusicBrainz. Szukam w Discogs...');await searchBarcodeInDiscogs(cleaned);return;}
+    if(releases.length===1){setBarcodeStatus('Znaleziono 1 wydanie. Wypelniam formularz...','ok');await applyRelease(releases[0],cleaned);}
+    else{setBarcodeStatus(`Znaleziono ${releases.length} wydan - wybierz:`,'ok');renderBarcodeResults(releases,cleaned);}
+  } catch(err){setBarcodeStatus('Blad: '+err.message,'error');}
+}
+async function searchBarcodeInDiscogs(barcode) {
+  try {
+    const res=await fetch(`${DISCOGS_BASE}/database/search?barcode=${encodeURIComponent(barcode)}&token=${DISCOGS_TOKEN}`,{headers:{'User-Agent':'KatalogMuzyczny/1.0'}});
+    if(!res.ok)throw new Error('Blad Discogs');
+    const results=(await res.json()).results||[];
+    if(!results.length){setBarcodeStatus('Nie znaleziono w zadnej bazie.','error');return;}
+    if(results.length===1){setBarcodeStatus('Znaleziono w Discogs. Wypelniam...','ok');await applyDiscogsRelease(results[0],barcode);}
+    else{setBarcodeStatus(`Znaleziono ${results.length} wynikow w Discogs:`,'ok');renderDiscogsResults(results,barcode,'barcode-results',setBarcodeStatus);}
+  } catch(err){setBarcodeStatus('Blad Discogs: '+err.message,'error');}
+}
+function renderBarcodeResults(releases,barcode) {
+  const box=document.getElementById('barcode-results');
+  box.innerHTML=releases.map((r,i)=>{
+    const artist=(r['artist-credit']||[]).map(a=>a.name||(a.artist&&a.artist.name)).filter(Boolean).join(', ');
+    const formats=(r.media||[]).map(m=>m.format).filter(Boolean);
+    const year=(r.date||'').slice(0,4);
+    return `<div class="barcode-result" data-idx="${i}"><div class="r-title">${escapeHtml(artist||'?')} \u2014 ${escapeHtml(r.title||'?')}</div><div class="r-meta">${year?escapeHtml(year)+' \u00b7 ':''}${escapeHtml(formats.join(', ')||'nieznany format')}</div></div>`;
+  }).join('');
+  box.classList.add('show');
+  box.querySelectorAll('.barcode-result').forEach(el=>{
+    el.addEventListener('click',async()=>{const idx=Number(el.dataset.idx);box.classList.remove('show');setBarcodeStatus('Wypelniam...','ok');await applyRelease(releases[idx],barcode);});
+  });
+}
+function renderDiscogsResults(results,barcode,boxId,setStatus) {
+  const box=document.getElementById(boxId);
+  box.innerHTML=results.map((r,i)=>{
+    const year=r.year?`${r.year} \u00b7 `:'';
+    const format=(r.formats||[]).map(f=>f.name).join(', ')||r.format||'';
+    return `<div class="barcode-result" data-idx="${i}"><div class="r-title">${escapeHtml(r.title||'?')}</div><div class="r-meta">${escapeHtml(year)}${escapeHtml(format)}</div></div>`;
+  }).join('');
+  box.classList.add('show');
+  box.querySelectorAll('.barcode-result').forEach(el=>{
+    el.addEventListener('click',async()=>{const idx=Number(el.dataset.idx);box.classList.remove('show');setStatus('Wypelniam...','ok');await applyDiscogsRelease(results[idx],barcode);});
+  });
+}
+async function applyDiscogsRelease(r,barcode) {
+  const form=document.getElementById('add-form');
+  let artist='',title=r.title||'';
+  if(title.includes(' - ')){const p=title.split(' - ');artist=p[0];title=p.slice(1).join(' - ');}
+  const year=r.year?String(r.year):'';
+  const formats=(r.formats||[]).map(f=>f.name);if(r.format)formats.push(r.format);
+  const genreRaw=(r.genre||r.style||[]);
+  const genre=genreRaw.length?prettifyGenre(genreRaw[0]):'';
+  form.artist.value=artist||form.artist.value;
+  form.title.value=title;
+  if(year)form.year.value=year;
+  if(barcode)form.barcode.value=barcode;
+  form.type.value=detectMediaType(formats);
+  if(genre)form.genre.value=genre;
+  setBarcodeStatus('Pobieram okladke z Discogs...','ok');
+  let cover=null;
+  if(r.cover_image&&!r.cover_image.includes('spacer')){try{const ir=await fetch(r.cover_image);if(ir.ok)cover=await blobToDataUrl(await ir.blob());}catch(e){}}
+  if(cover){newCover=cover;const prev=document.getElementById('cover-preview');prev.src=cover;prev.style.display='block';}
+  setBarcodeStatus(`${artist||title}. Sprawdz dane i kliknij "Dodaj do kolekcji".`,'ok');
+  form.artist.focus();
+}
+async function applyRelease(release,barcode) {
+  const form=document.getElementById('add-form');
+  const artist=(release['artist-credit']||[]).map(a=>a.name||(a.artist&&a.artist.name)).filter(Boolean).join(', ');
+  const formats=(release.media||[]).map(m=>m.format).filter(Boolean);
+  const year=(release.date||'').slice(0,4);
+  form.artist.value=artist||form.artist.value;
+  form.title.value=release.title||form.title.value;
+  if(year)form.year.value=year;
+  if(barcode)form.barcode.value=barcode;
+  form.type.value=detectMediaType(formats);
+  setBarcodeStatus('Pobieram okladke i gatunek...','ok');
+  const[cover,genre]=await Promise.all([fetchCoverAsDataUrl(release.id,artist,release.title),fetchGenreFromMB(release)]);
+  if(genre)form.genre.value=genre;
+  if(cover){newCover=cover;const prev=document.getElementById('cover-preview');prev.src=cover;prev.style.display='block';}
+  setBarcodeStatus(`${artist} \u2014 ${release.title}. Sprawdz dane i kliknij "Dodaj do kolekcji".`,'ok');
+  form.artist.focus();
+}
+document.getElementById('barcode-search').addEventListener('click',()=>{
+  const code=document.getElementById('barcode-input').value.trim();
+  if(!code){setBarcodeStatus('Wpisz kod kreskowy.','error');return;}
+  searchByBarcode(code);
+});
+document.getElementById('barcode-input').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){e.preventDefault();document.getElementById('barcode-search').click();}
+});
+document.getElementById('barcode-clear').addEventListener('click',()=>{
+  document.getElementById('barcode-input').value='';
+  document.getElementById('barcode-results').classList.remove('show');
+  setBarcodeStatus('Dane pobierane z MusicBrainz i Discogs.');
+});
+
+// ---- WYSZUKIWANIE PO NAZWIE ----
 async function doSearchByTitle(query) {
   const q = query.trim();
   if (q.length < 2) { setTitleStatus('Wpisz co najmniej 2 znaki.', 'error'); return; }
