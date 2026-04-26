@@ -383,6 +383,7 @@
     <div class="form-actions">
       <button class="btn" id="export-json">Eksport JSON</button>
       <button class="btn" id="export-csv">Eksport CSV</button>
+      <button class="btn" id="export-excel">Eksport Excel</button>
       <label class="btn" style="cursor:pointer;">
         Import JSON
         <input type="file" id="import-json" accept=".json,application/json" style="display:none">
@@ -391,7 +392,6 @@
         Import CSV
         <input type="file" id="import-csv" accept=".csv,text/csv" style="display:none">
       </label>
-      <button class="btn danger" id="clear-all">Usuń wszystko</button>
     </div>
     <p style="font-size:12px;color:var(--muted);margin-top:10px;margin-bottom:0;">
       Dane zapisywane są w chmurze Firebase i synchronizowane automatycznie na wszystkich urządzeniach.
@@ -919,11 +919,44 @@ function parseCsv(text) {
   return rows;
 }
 
-document.getElementById('clear-all').addEventListener('click', async () => {
-  if (!catalog.length) { toast('Kolekcja jest już pusta'); return; }
-  if (!confirm(`Na pewno usunąć całą kolekcję (${catalog.length} pozycji)? Tej operacji nie można cofnąć.`)) return;
-  await clearAll();
-  toast('Kolekcja wyczyszczona');
+document.getElementById('export-excel').addEventListener('click', () => {
+  // Nagłówki
+  const rows = [
+    ['Lp.', 'Artysta', 'Tytuł albumu', 'Rok', 'Gatunek', 'Typ nośnika', 'Kod kreskowy']
+  ];
+  const typeLabel = { winyl: 'Winyl', cd: 'CD', kaseta: 'Kaseta' };
+  catalog.forEach((it, i) => {
+    rows.push([
+      i + 1,
+      it.artist || '',
+      it.title || '',
+      it.year || '',
+      it.genre || '',
+      typeLabel[it.type] || it.type || '',
+      it.barcode || ''
+    ]);
+  });
+  // Buduj XML dla Excela (format SpreadsheetML)
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+  xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+  <Styles>
+    <Style ss:ID="header">
+      <Font ss:Bold="1"/>
+      <Interior ss:Color="#8B1E1E" ss:Pattern="Solid"/>
+      <Font ss:Color="#FFFFFF" ss:Bold="1"/>
+    </Style>
+  </Styles>
+  <Worksheet ss:Name="Kolekcja muzyczna">
+    <Table>
+      ${rows.map((row, ri) => `<Row>${row.map(cell => `<Cell${ri===0?' ss:StyleID="header"':''}><Data ss:Type="${typeof cell==='number'?'Number':'String'}">${String(cell).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</Data></Cell>`).join('')}</Row>`).join('\n      ')}
+    </Table>
+  </Worksheet>
+</Workbook>`;
+  const blob = new Blob([xml], { type: 'application/vnd.ms-excel' });
+  downloadBlob(blob, 'kolekcja-' + new Date().toISOString().slice(0,10) + '.xls');
+  toast('Wyeksportowano do Excela');
 });
 
 // ---- PRZEŁĄCZANIE ZAKŁADEK WYSZUKIWANIA ----
