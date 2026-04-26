@@ -947,6 +947,10 @@ function setTitleStatus(msg, kind) {
   if (kind) el.classList.add(kind);
 }
 
+// ---- WYSZUKIWANIE PO NAZWIE ----
+const MB_BASE = 'https://musicbrainz.org/ws/2';
+const DISCOGS_BASE = 'https://api.discogs.com';
+const DISCOGS_TOKEN = 'kuovtBqNcDmufsuRiYUgdwqYmvdOnGIGVIVnjFOr';
 async function doSearchByTitle(query) {
   const q = query.trim();
   if (q.length < 2) { setTitleStatus('Wpisz co najmniej 2 znaki.', 'error'); return; }
